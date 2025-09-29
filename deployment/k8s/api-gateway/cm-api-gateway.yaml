@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: cm-api-gateway
-  namespace: phonebill-dev
+  namespace: phonebill-dg0504
 data:
   SERVER_PORT: "8080"
   BILL_SERVICE_URL: "http://bill-service"

@@ -3,7 +3,7 @@
 ## 📋 배포 개요
 
 **시스템명**: phonebill
-**네임스페이스**: phonebill-dev
+**네임스페이스**: phonebill-dg0504
 **ACR명**: acrdigitalgarage01  
 **k8s명**: aks-digitalgarage-01
 **파드수**: 1개 (각 서비스)
@@ -58,7 +58,7 @@ kubectl cluster-info
 
 ### 3. 네임스페이스 존재 확인
 ```bash
-kubectl get ns phonebill-dev
+kubectl get ns phonebill-dg0504
 ```
 
 ### 4. Ingress Controller External IP 확인 ✅
@@ -81,16 +81,16 @@ echo $PASSWORD
 
 ### 6. Redis Service 이름 확인 ✅
 ```bash
-kubectl get svc -n phonebill-dev | grep redis
+kubectl get svc -n phonebill-dg0504 | grep redis
 ```
 **확인 완료**: `redis-cache-dev-master` (ClusterIP)
 
 ### 7. Database Service 이름 확인 ✅
 ```bash
 # 각 서비스별 DB 확인
-kubectl get svc -n phonebill-dev | grep auth
-kubectl get svc -n phonebill-dev | grep bill  
-kubectl get svc -n phonebill-dev | grep product
+kubectl get svc -n phonebill-dg0504 | grep auth
+kubectl get svc -n phonebill-dg0504 | grep bill  
+kubectl get svc -n phonebill-dg0504 | grep product
 ```
 **확인 완료**:
 - User Service: `auth-postgres-dev-postgresql`
@@ -173,45 +173,45 @@ kubectl apply -f deployment/k8s/kos-mock/
 
 #### 전체 객체 확인
 ```bash
-kubectl get all -n phonebill-dev
+kubectl get all -n phonebill-dg0504
 ```
 
 #### Pod 상태 확인  
 ```bash
-kubectl get pods -n phonebill-dev
+kubectl get pods -n phonebill-dg0504
 ```
 
 #### Service 확인
 ```bash
-kubectl get svc -n phonebill-dev
+kubectl get svc -n phonebill-dg0504
 ```
 
 #### Ingress 확인
 ```bash
-kubectl get ingress -n phonebill-dev
+kubectl get ingress -n phonebill-dg0504
 ```
 
 #### ConfigMap/Secret 확인
 ```bash
-kubectl get cm,secret -n phonebill-dev
+kubectl get cm,secret -n phonebill-dg0504
 ```
 
 ### 4. 로그 확인
 ```bash
 # 특정 서비스 로그 확인
-kubectl logs -f deployment/user-service -n phonebill-dev
-kubectl logs -f deployment/bill-service -n phonebill-dev
-kubectl logs -f deployment/product-service -n phonebill-dev
-kubectl logs -f deployment/api-gateway -n phonebill-dev
-kubectl logs -f deployment/kos-mock -n phonebill-dev
+kubectl logs -f deployment/user-service -n phonebill-dg0504
+kubectl logs -f deployment/bill-service -n phonebill-dg0504
+kubectl logs -f deployment/product-service -n phonebill-dg0504
+kubectl logs -f deployment/api-gateway -n phonebill-dg0504
+kubectl logs -f deployment/kos-mock -n phonebill-dg0504
 ```
 
 ### 5. Health Check 확인
 ```bash
 # 각 서비스 Health 상태 확인 (Pod 내부에서)
-kubectl exec -n phonebill-dev deployment/user-service -- curl http://localhost:8081/actuator/health
-kubectl exec -n phonebill-dev deployment/bill-service -- curl http://localhost:8082/actuator/health
-kubectl exec -n phonebill-dev deployment/product-service -- curl http://localhost:8083/actuator/health
+kubectl exec -n phonebill-dg0504 deployment/user-service -- curl http://localhost:8081/actuator/health
+kubectl exec -n phonebill-dg0504 deployment/bill-service -- curl http://localhost:8082/actuator/health
+kubectl exec -n phonebill-dg0504 deployment/product-service -- curl http://localhost:8083/actuator/health
 ```
 
 ## 🔍 문제 해결 가이드
@@ -219,22 +219,22 @@ kubectl exec -n phonebill-dev deployment/product-service -- curl http://localhos
 ### Pod 시작 실패시
 ```bash
 # Pod 상세 정보 확인
-kubectl describe pod <POD_NAME> -n phonebill-dev
+kubectl describe pod <POD_NAME> -n phonebill-dg0504
 
 # 이벤트 확인
-kubectl get events -n phonebill-dev --sort-by='.lastTimestamp'
+kubectl get events -n phonebill-dg0504 --sort-by='.lastTimestamp'
 ```
 
 ### ConfigMap/Secret 변경시
 ```bash
 # 변경 후 Pod 재시작
-kubectl rollout restart deployment/<SERVICE_NAME> -n phonebill-dev
+kubectl rollout restart deployment/<SERVICE_NAME> -n phonebill-dg0504
 ```
 
 ### 네트워크 연결 문제
 ```bash
 # Service DNS 해결 테스트
-kubectl exec -n phonebill-dev deployment/api-gateway -- nslookup user-service
+kubectl exec -n phonebill-dg0504 deployment/api-gateway -- nslookup user-service
 ```
 
 ## 📊 환경변수 매핑 테이블
