@@ -1,0 +1,277 @@
+name: Backend Services CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'api-gateway/**'
+      - 'user-service/**'
+      - 'bill-service/**'
+      - 'product-service/**'
+      - 'kos-mock/**'
+      - 'common/**'
+      - '.github/**'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      ENVIRONMENT:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      SKIP_SONARQUBE:
+        description: 'Skip SonarQube Analysis'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.set_outputs.outputs.image_tag }}
+      environment: ${{ steps.set_outputs.outputs.environment }}
+      registry: ${{ steps.set_outputs.outputs.registry }}
+      image_org: ${{ steps.set_outputs.outputs.image_org }}
+      resource_group: ${{ steps.set_outputs.outputs.resource_group }}
+      aks_cluster: ${{ steps.set_outputs.outputs.aks_cluster }}
+      namespace: ${{ steps.set_outputs.outputs.namespace }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 23
+        uses: actions/setup-java@v3
+        with:
+          java-version: '23'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Determine environment
+        id: determine_env
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.ENVIRONMENT || 'dev' }}"
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+      - name: Load environment variables
+        id: env_vars
+        run: |
+          ENV=${{ steps.determine_env.outputs.environment }}
+
+          # Initialize variables with defaults
+          REGISTRY="acrdigitalgarage01.azurecr.io"
+          IMAGE_ORG="phonebill"
+          RESOURCE_GROUP="rg-digitalgarage-01"
+          AKS_CLUSTER="aks-digitalgarage-01"
+          NAMESPACE="phonebill-dg0504"
+
+          # Read environment variables from deployment/cicd/config file
+          if [[ -f "deployment/cicd/config/deploy_env_vars_${ENV}" ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              # Skip comments and empty lines
+              [[ "$line" =~ ^#.*$ ]] && continue
+              [[ -z "$line" ]] && continue
+
+              # Extract key-value pairs
+              key=$(echo "$line" | cut -d '=' -f1)
+              value=$(echo "$line" | cut -d '=' -f2-)
+
+              # Override defaults if found in config
+              case "$key" in
+                "resource_group") RESOURCE_GROUP="$value" ;;
+                "cluster_name") AKS_CLUSTER="$value" ;;
+              esac
+            done < "deployment/cicd/config/deploy_env_vars_${ENV}"
+          fi
+
+          # Export for other steps
+          echo "REGISTRY=$REGISTRY" >> $GITHUB_ENV
+          echo "IMAGE_ORG=$IMAGE_ORG" >> $GITHUB_ENV
+          echo "RESOURCE_GROUP=$RESOURCE_GROUP" >> $GITHUB_ENV
+          echo "AKS_CLUSTER=$AKS_CLUSTER" >> $GITHUB_ENV
+          echo "NAMESPACE=$NAMESPACE" >> $GITHUB_ENV
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: |
+          ./gradlew build -x test
+
+      - name: SonarQube Analysis & Quality Gate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          # Check if SonarQube should be skipped
+          SKIP_SONARQUBE="${{ github.event.inputs.SKIP_SONARQUBE || 'true' }}"
+
+          if [[ "$SKIP_SONARQUBE" == "true" ]]; then
+            echo "⏭️ Skipping SonarQube Analysis (SKIP_SONARQUBE=$SKIP_SONARQUBE)"
+            exit 0
+          fi
+
+          # Define services array
+          services=(api-gateway user-service bill-service product-service kos-mock)
+
+          # Run tests, coverage reports, and SonarQube analysis for each service
+          for service in "${services[@]}"; do
+            echo "🔍 Analyzing $service..."
+            ./gradlew :$service:test :$service:jacocoTestReport :$service:sonar \
+              -Dsonar.projectKey=phonebill-$service-${{ steps.determine_env.outputs.environment }} \
+              -Dsonar.projectName=phonebill-$service-${{ steps.determine_env.outputs.environment }} \
+              -Dsonar.host.url=$SONAR_HOST_URL \
+              -Dsonar.token=$SONAR_TOKEN \
+              -Dsonar.java.binaries=build/classes/java/main \
+              -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml \
+              -Dsonar.exclusions=**/config/**,**/entity/**,**/dto/**,**/*Application.class,**/exception/**
+            echo "✅ $service analysis completed"
+          done
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-builds
+          path: |
+            api-gateway/build/libs/*.jar
+            user-service/build/libs/*.jar
+            bill-service/build/libs/*.jar
+            product-service/build/libs/*.jar
+            kos-mock/build/libs/*.jar
+
+      - name: Set outputs
+        id: set_outputs
+        run: |
+          IMAGE_TAG=$(date +%Y%m%d%H%M%S)
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "environment=${{ steps.determine_env.outputs.environment }}" >> $GITHUB_OUTPUT
+          echo "registry=${{ env.REGISTRY }}" >> $GITHUB_OUTPUT
+          echo "image_org=${{ env.IMAGE_ORG }}" >> $GITHUB_OUTPUT
+          echo "resource_group=${{ env.RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+          echo "aks_cluster=${{ env.AKS_CLUSTER }}" >> $GITHUB_OUTPUT
+          echo "namespace=${{ env.NAMESPACE }}" >> $GITHUB_OUTPUT
+
+  release:
+    name: Build and Push Docker Images
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: app-builds
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub (prevent rate limit)
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ needs.build.outputs.registry }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push Docker images for all services
+        run: |
+          # Define services array
+          services=(api-gateway user-service bill-service product-service kos-mock)
+
+          # Build and push each service image
+          for service in "${services[@]}"; do
+            echo "🏗️ Building $service..."
+            docker build \
+              --build-arg BUILD_LIB_DIR="$service/build/libs" \
+              --build-arg ARTIFACTORY_FILE="$service.jar" \
+              -f deployment/container/Dockerfile-backend \
+              -t ${{ needs.build.outputs.registry }}/${{ needs.build.outputs.image_org }}/$service:${{ needs.build.outputs.environment }}-${{ needs.build.outputs.image_tag }} .
+
+            echo "📦 Pushing $service..."
+            docker push ${{ needs.build.outputs.registry }}/${{ needs.build.outputs.image_org }}/$service:${{ needs.build.outputs.environment }}-${{ needs.build.outputs.image_tag }}
+            echo "✅ $service completed"
+          done
+
+  deploy:
+    name: Deploy to Kubernetes
+    needs: [build, release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install Azure CLI
+        run: |
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Get AKS Credentials
+        run: |
+          az aks get-credentials --resource-group ${{ needs.build.outputs.resource_group }} --name ${{ needs.build.outputs.aks_cluster }} --overwrite-existing
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace ${{ needs.build.outputs.namespace }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Install Kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Update Kustomize images and deploy
+        run: |
+          cd deployment/cicd/kustomize/overlays/${{ needs.build.outputs.environment }}
+
+          # Update image tags for each service
+          kustomize edit set image ${{ needs.build.outputs.registry }}/${{ needs.build.outputs.image_org }}/api-gateway:${{ needs.build.outputs.environment }}-${{ needs.build.outputs.image_tag }}
+          kustomize edit set image ${{ needs.build.outputs.registry }}/${{ needs.build.outputs.image_org }}/user-service:${{ needs.build.outputs.environment }}-${{ needs.build.outputs.image_tag }}
+          kustomize edit set image ${{ needs.build.outputs.registry }}/${{ needs.build.outputs.image_org }}/bill-service:${{ needs.build.outputs.environment }}-${{ needs.build.outputs.image_tag }}
+          kustomize edit set image ${{ needs.build.outputs.registry }}/${{ needs.build.outputs.image_org }}/product-service:${{ needs.build.outputs.environment }}-${{ needs.build.outputs.image_tag }}
+          kustomize edit set image ${{ needs.build.outputs.registry }}/${{ needs.build.outputs.image_org }}/kos-mock:${{ needs.build.outputs.environment }}-${{ needs.build.outputs.image_tag }}
+
+          # Apply manifests
+          kubectl apply -k .
+
+      - name: Wait for deployments to be ready
+        run: |
+          echo "⏳ Waiting for deployments to be ready..."
+          kubectl -n ${{ needs.build.outputs.namespace }} wait --for=condition=available deployment/api-gateway --timeout=300s
+          kubectl -n ${{ needs.build.outputs.namespace }} wait --for=condition=available deployment/user-service --timeout=300s
+          kubectl -n ${{ needs.build.outputs.namespace }} wait --for=condition=available deployment/bill-service --timeout=300s
+          kubectl -n ${{ needs.build.outputs.namespace }} wait --for=condition=available deployment/product-service --timeout=300s
+          kubectl -n ${{ needs.build.outputs.namespace }} wait --for=condition=available deployment/kos-mock --timeout=300s
+          echo "✅ All deployments are ready!"
+
+      - name: Display deployment info
+        run: |
+          echo "📋 Deployment Information:"
+          kubectl get pods -n ${{ needs.build.outputs.namespace }}
+          kubectl get services -n ${{ needs.build.outputs.namespace }}
+          kubectl get ingress -n ${{ needs.build.outputs.namespace }}
