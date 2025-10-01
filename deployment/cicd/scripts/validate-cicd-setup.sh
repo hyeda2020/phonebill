@@ -1,5 +1,5 @@
 #!/bin/bash
-# Base 리소스 누락 검증 스크립트 (범용)
+# Base 리소스 누락 검증 스크립트
 
 echo "🔍 phonebill Base 리소스 누락 검증 시작..."
 
@@ -14,7 +14,7 @@ for dir in $BASE_DIR/*/; do
     if [ -d "$dir" ] && [[ $(basename "$dir") != "common" ]]; then
         service=$(basename "$dir")
         echo "=== $service ==="
-        
+
         # 필수 파일 확인
         for required in "${REQUIRED_FILES[@]}"; do
             if [ -f "$dir$required" ]; then
@@ -24,7 +24,7 @@ for dir in $BASE_DIR/*/; do
                 ((MISSING_RESOURCES++))
             fi
         done
-        
+
         # 선택적 파일 확인
         for optional in "${OPTIONAL_FILES[@]}"; do
             files=($(ls "$dir"$optional*".yaml" 2>/dev/null))
@@ -123,6 +123,6 @@ else
     echo "3. 파일명이 명명 규칙을 따르는지 확인하세요:"
     echo "   - ConfigMap: cm-{서비스명}.yaml"
     echo "   - Secret: secret-{서비스명}.yaml"
-    echo "4. 다시 검증: ./deployment/cicd/scripts/validate-cicd-setup.sh"
+    echo "4. 다시 검증: ./scripts/validate-cicd-setup.sh"
     exit 1
 fi

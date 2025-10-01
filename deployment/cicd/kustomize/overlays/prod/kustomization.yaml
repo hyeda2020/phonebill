@@ -7,7 +7,7 @@ resources:
   - ../../base
 
 patches:
-  - path: configmap-common-patch.yaml
+  - path: cm-common-patch.yaml
     target:
       kind: ConfigMap
       name: cm-common
@@ -54,12 +54,12 @@ patches:
 
 images:
   - name: acrdigitalgarage01.azurecr.io/phonebill/api-gateway
-    newTag: prod-latest
+    newTag: latest
   - name: acrdigitalgarage01.azurecr.io/phonebill/user-service
-    newTag: prod-latest
+    newTag: latest
   - name: acrdigitalgarage01.azurecr.io/phonebill/bill-service
-    newTag: prod-latest
+    newTag: latest
   - name: acrdigitalgarage01.azurecr.io/phonebill/product-service
-    newTag: prod-latest
+    newTag: latest
   - name: acrdigitalgarage01.azurecr.io/phonebill/kos-mock
-    newTag: prod-latest
+    newTag: latest

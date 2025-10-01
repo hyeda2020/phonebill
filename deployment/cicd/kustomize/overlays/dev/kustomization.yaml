@@ -11,6 +11,14 @@ patches:
     target:
       kind: ConfigMap
       name: cm-common
+  - path: secret-common-patch.yaml
+    target:
+      kind: Secret
+      name: secret-common
+  - path: ingress-patch.yaml
+    target:
+      kind: Ingress
+      name: phonebill
   - path: deployment-api-gateway-patch.yaml
     target:
       kind: Deployment
@@ -31,14 +39,6 @@ patches:
     target:
       kind: Deployment
       name: kos-mock
-  - path: ingress-patch.yaml
-    target:
-      kind: Ingress
-      name: phonebill
-  - path: secret-common-patch.yaml
-    target:
-      kind: Secret
-      name: secret-common
   - path: secret-user-service-patch.yaml
     target:
       kind: Secret
@@ -54,12 +54,12 @@ patches:
 
 images:
   - name: acrdigitalgarage01.azurecr.io/phonebill/api-gateway
-    newTag: dev-latest
+    newTag: latest
   - name: acrdigitalgarage01.azurecr.io/phonebill/user-service
-    newTag: dev-latest
+    newTag: latest
   - name: acrdigitalgarage01.azurecr.io/phonebill/bill-service
-    newTag: dev-latest
+    newTag: latest
   - name: acrdigitalgarage01.azurecr.io/phonebill/product-service
-    newTag: dev-latest
+    newTag: latest
   - name: acrdigitalgarage01.azurecr.io/phonebill/kos-mock
-    newTag: dev-latest
+    newTag: latest

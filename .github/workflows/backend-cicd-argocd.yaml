@@ -1,0 +1,222 @@
+name: Backend CI/CD with ArgoCD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'api-gateway/**'
+      - 'user-service/**'
+      - 'bill-service/**'
+      - 'product-service/**'
+      - 'kos-mock/**'
+      - 'common/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'api-gateway/**'
+      - 'user-service/**'
+      - 'bill-service/**'
+      - 'product-service/**'
+      - 'kos-mock/**'
+      - 'common/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+
+env:
+  ACR_NAME: acrdigitalgarage01
+  RESOURCE_GROUP: rg-digitalgarage-01
+  AKS_CLUSTER: aks-digitalgarage-01
+  SYSTEM_NAME: phonebill
+  MANIFEST_REPO_URL: https://github.com/hyeda2020/phonebill.git
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.set-tag.outputs.image_tag }}
+      environment: ${{ steps.set-env.outputs.environment }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Set environment based on branch
+      id: set-env
+      run: |
+        if [[ ${{ github.ref }} == 'refs/heads/main' ]]; then
+          echo "environment=prod" >> $GITHUB_OUTPUT
+        elif [[ ${{ github.ref }} == 'refs/heads/develop' ]]; then
+          echo "environment=dev" >> $GITHUB_OUTPUT
+        else
+          echo "environment=dev" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Set image tag
+      id: set-tag
+      run: |
+        echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+    - name: Cache Gradle packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Build with Gradle
+      run: ./gradlew clean build -x test
+
+    - name: Run tests
+      run: ./gradlew test
+
+    - name: Publish test results
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        files: |
+          **/build/test-results/test/TEST-*.xml
+
+  release:
+    name: Build and Push Docker Images
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Set environment variables
+      run: |
+        echo "IMAGE_TAG=${{ needs.build.outputs.image_tag }}" >> $GITHUB_ENV
+        echo "ENVIRONMENT=${{ needs.build.outputs.environment }}" >> $GITHUB_ENV
+
+    - name: Azure Container Registry Login
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.ACR_NAME }}.azurecr.io
+        username: ${{ secrets.ACR_USERNAME }}
+        password: ${{ secrets.ACR_PASSWORD }}
+
+    - name: Build JAR files
+      run: ./gradlew bootJar
+
+    - name: Build and push Docker images
+      run: |
+        services="api-gateway user-service bill-service product-service kos-mock"
+
+        for service in $services; do
+          echo "Building Docker image for $service..."
+
+          # Dockerfile 생성
+          cat > $service/Dockerfile << EOF
+        FROM openjdk:17-jre-slim
+
+        WORKDIR /app
+
+        COPY build/libs/*.jar app.jar
+
+        EXPOSE 8080
+
+        ENTRYPOINT ["java", "-jar", "app.jar"]
+        EOF
+
+          # Docker 이미지 빌드 및 푸시
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.SYSTEM_NAME }}/$service:${{ env.ENVIRONMENT }}-${{ env.IMAGE_TAG }} $service/
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.SYSTEM_NAME }}/$service:${{ env.ENVIRONMENT }}-${{ env.IMAGE_TAG }}
+
+          echo "✅ $service image pushed successfully"
+        done
+
+  update-manifest:
+    name: Update Manifest Repository
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+    - name: Set image tag environment variable
+      run: |
+        echo "IMAGE_TAG=${{ needs.build.outputs.image_tag }}" >> $GITHUB_ENV
+        echo "ENVIRONMENT=${{ needs.build.outputs.environment }}" >> $GITHUB_ENV
+
+    - name: Update Manifest Repository
+      run: |
+        # 매니페스트 레포지토리 클론
+        REPO_URL=$(echo "${{ env.MANIFEST_REPO_URL }}" | sed 's|https://||')
+        git clone https://${{ secrets.GIT_USERNAME }}:${{ secrets.GIT_PASSWORD }}@${REPO_URL} manifest-repo
+        cd manifest-repo
+
+        # Kustomize 설치
+        curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+        sudo mv kustomize /usr/local/bin/
+
+        # 매니페스트 디렉토리 확인 및 생성
+        if [ ! -d "${{ env.SYSTEM_NAME }}/kustomize/overlays/${{ env.ENVIRONMENT }}" ]; then
+          echo "매니페스트 디렉토리가 존재하지 않습니다. 매니페스트 레포지토리를 먼저 설정해주세요."
+          exit 1
+        fi
+
+        # 매니페스트 업데이트
+        cd ${{ env.SYSTEM_NAME }}/kustomize/overlays/${{ env.ENVIRONMENT }}
+
+        # 각 서비스별 이미지 태그 업데이트
+        services="api-gateway user-service bill-service product-service kos-mock"
+        for service in $services; do
+          echo "Updating $service image tag..."
+          kustomize edit set image ${{ env.ACR_NAME }}.azurecr.io/${{ env.SYSTEM_NAME }}/$service:${{ env.ENVIRONMENT }}-${{ env.IMAGE_TAG }}
+        done
+
+        # Git 설정 및 푸시
+        cd ../../../..
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git add .
+        git commit -m "🚀 Update ${{ env.SYSTEM_NAME }} ${{ env.ENVIRONMENT }} images to ${{ env.ENVIRONMENT }}-${{ env.IMAGE_TAG }}"
+        git push origin main
+
+        echo "✅ 매니페스트 업데이트 완료. ArgoCD가 자동으로 배포합니다."
+
+  notify:
+    name: Notify Results
+    needs: [build, release, update-manifest]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+    - name: Notify Success
+      if: needs.build.result == 'success' && needs.release.result == 'success' && needs.update-manifest.result == 'success'
+      run: |
+        echo "🎉 CI/CD 파이프라인이 성공적으로 완료되었습니다!"
+        echo "📦 이미지 태그: ${{ needs.build.outputs.environment }}-${{ needs.build.outputs.image_tag }}"
+        echo "🌍 환경: ${{ needs.build.outputs.environment }}"
+        echo "🚀 ArgoCD를 통해 자동 배포가 시작됩니다."
+
+    - name: Notify Failure
+      if: needs.build.result == 'failure' || needs.release.result == 'failure' || needs.update-manifest.result == 'failure'
+      run: |
+        echo "❌ CI/CD 파이프라인 실행 중 오류가 발생했습니다."
+        echo "빌드 결과: ${{ needs.build.result }}"
+        echo "릴리스 결과: ${{ needs.release.result }}"
+        echo "매니페스트 업데이트 결과: ${{ needs.update-manifest.result }}"

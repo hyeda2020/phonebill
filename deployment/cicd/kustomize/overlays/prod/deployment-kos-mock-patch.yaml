@@ -10,8 +10,8 @@ spec:
       - name: kos-mock
         resources:
           requests:
-            cpu: 1024m
-            memory: 1024Mi
+            cpu: "1024m"
+            memory: "1024Mi"
           limits:
-            cpu: 4096m
-            memory: 4096Mi
+            cpu: "4096m"
+            memory: "4096Mi"

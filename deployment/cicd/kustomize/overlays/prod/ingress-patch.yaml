@@ -1,20 +1,19 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: phonebill-ingress
+  name: phonebill
   annotations:
     kubernetes.io/ingress.class: nginx
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - phonebill.example.com
-    secretName: phonebill-tls-secret
+    - phonebill.yourdomain.com
+    secretName: phonebill-prod-tls
   rules:
-  - host: phonebill.example.com
+  - host: phonebill.yourdomain.com
     http:
       paths:
       - path: /api/v1/auth
